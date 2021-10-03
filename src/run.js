@@ -2,7 +2,7 @@ import express from "express";
 import exphbs from "express-handlebars";
 import { connect, end, query } from "./db.js";
 
-const PORT = 3001;
+const PORT = 3000;
 const WEB = "web";
 
 const app = express();
@@ -83,9 +83,14 @@ app.get("/cekis/:id?", async (req, res) => {
             conn,
             `
             select
-              prekes.id, preke, kiekis, kaina, tipai.pavadinimas as tipas
+              prekes.id,
+              preke,
+              kiekis,
+              kaina,
+              tipai.pavadinimas as tipas
             from prekes left join tipai on prekes.tipai_id = tipai.id
-            where cekiai_id = ?`,
+            where cekiai_id = ?
+            order by preke`,
             [cekiai[0].id],
           );
           res.render("cekis", { cekis: cekiai[0], prekes });
@@ -266,6 +271,120 @@ app.get("/preke/:id?", async (req, res) => {
   }
 });
 
+app.post("/preke", async (req, res) => {
+  const cekisId = parseInt(req.body.cekisId);
+  const preke = req.body.preke;
+  const kiekis = parseFloat(req.body.kiekis);
+  const kaina = parseFloat(req.body.kaina);
+  const tipas = parseInt(req.body.tipas);
+  if (req.body.id) {
+    // preke update
+    const id = parseInt(req.body.id);
+    if (
+      !isNaN(id) &&
+      typeof preke === "string" && preke.trim() !== "" &&
+      isFinite(kiekis) && kiekis > 0 &&
+      isFinite(kaina) && kaina > 0 &&
+      isFinite(tipas)
+    ) {
+      let conn;
+      try {
+        conn = await connect();
+        await query(
+          conn,
+          `
+          update prekes
+          set preke = ?, kiekis = ?, kaina = ?, tipai_id = ?
+          where id = ?`,
+          [preke, kiekis, kaina, tipas, id],
+        );
+      } catch (err) {
+        // ivyko klaida keiciant duomenis
+        res.render("klaida", { err });
+        return;
+      } finally {
+        await end(conn);
+      }
+    }
+  } else if (req.body.cekisId) {
+    // insert preke
+    if (
+      !isNaN(cekisId) &&
+      typeof preke === "string" && preke.trim() !== "" &&
+      isFinite(kiekis) && kiekis > 0 &&
+      isFinite(kaina) && kaina > 0 &&
+      isFinite(tipas)
+    ) {
+      let conn;
+      try {
+        conn = await connect();
+        await query(
+          conn,
+          `
+          insert into prekes (cekiai_id, preke, kiekis, kaina, tipai_id)
+          values (?, ?, ?, ?, ?)`,
+          [cekisId, preke, kiekis, kaina, tipas],
+        );
+      } catch (err) {
+        // ivyko klaida irasant duomenis
+        res.render("klaida", { err });
+        return;
+      } finally {
+        await end(conn);
+      }
+    }
+  } else {
+    // klaida, ne nepadave duomenu
+    // galima butu nusiusti klaidos puslpi
+  }
+  if (isFinite(cekisId)) {
+    res.redirect("/cekis/" + cekisId);
+  } else {
+    res.redirect("/cekiai");
+  }
+});
+
+app.get("/preke/:id/del", async (req, res) => {
+  const id = parseInt(req.params.id);
+  let cekisId;
+  if (!isNaN(id)) {
+    let conn;
+    try {
+      conn = await connect();
+      const { results: prekes } = await query(
+        conn,
+        `
+        select
+          cekiai_id as cekisId
+        from prekes
+        where id = ?`,
+        [id],
+      );
+      if (prekes.length > 0) {
+        cekisId = prekes[0].cekisId;
+        await query(
+          conn,
+          `
+            delete from prekes
+            where id = ?`,
+          [id],
+        );
+      }
+    } catch (err) {
+      // ivyko klaida gaunant duomenis
+      res.render("klaida", { err });
+      return;
+    } finally {
+      await end(conn);
+    }
+  }
+  if (cekisId) {
+    res.redirect("/cekis/" + cekisId);
+  } else {
+    res.redirect("/cekiai");
+  }
+});
+
 app.get("/tipai", async (req, res) => {
   let conn;
   try {
@@ -407,6 +526,66 @@ app.get("/tipas/:id/del", async (req, res) => {
     }
   }
   res.redirect("/tipai");
+});
+
+app.use("/report/visos", async (req, res) => {
+  let nuo = new Date(req.body.nuo);
+  if (isNaN(nuo.getTime())) {
+    nuo = new Date("0001-01-01");
+  }
+  let iki = new Date(req.body.iki);
+  if (isNaN(iki.getTime())) {
+    iki = new Date("9999-12-31");
+  }
+  let conn;
+  try {
+    conn = await connect();
+    const { results: ataskaita } = await query(
+      conn,
+      `
+      select sum(kiekis * kaina) as suma
+      from prekes join cekiai on prekes.cekiai_id = cekiai.id
+      where cekiai.data >= ? and cekiai.data <= ?`,
+      [nuo, iki],
+    );
+    res.render("report/visos", { suma: ataskaita[0].suma, nuo, iki });
+  } catch (err) {
+    res.render("klaida", { err });
+  } finally {
+    await end(conn);
+  }
+});
+
+app.use("/report/tipai", async (req, res) => {
+  let nuo = new Date(req.body.nuo);
+  if (isNaN(nuo.getTime())) {
+    nuo = new Date("0001-01-01");
+  }
+  let iki = new Date(req.body.iki);
+  if (isNaN(iki.getTime())) {
+    iki = new Date("9999-12-31");
+  }
+  let conn;
+  try {
+    conn = await connect();
+    const { results: ataskaita } = await query(
+      conn,
+      `
+      select tipai.id, tipai.pavadinimas, sum(kiekis * kaina) as suma
+      from
+        prekes join cekiai on prekes.cekiai_id = cekiai.id
+        right join tipai on prekes.tipai_id = tipai.id
+      where cekiai.data >= ? and cekiai.data <= ? or cekiai.data is null
+      group by tipai.id, tipai.pavadinimas
+      order by tipai.pavadinimas`,
+      [nuo, iki],
+    );
+    res.render("report/tipai", { ataskaita, nuo, iki });
+  } catch (err) {
+    res.render("klaida", { err });
+  } finally {
+    await end(conn);
+  }
 });
 
 app.listen(PORT, () => {

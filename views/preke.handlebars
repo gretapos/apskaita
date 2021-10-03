@@ -1,6 +1,7 @@
 <form action="/preke" method="post">
   {{#if preke}}
   <input type="hidden" name="id" value="{{preke.id}}">
+  <input type="hidden" name="cekisId" value="{{preke.cekisId}}">
   {{/if}}
   {{#if cekisId}}
   <input type="hidden" name="cekisId" value="{{cekisId}}">
