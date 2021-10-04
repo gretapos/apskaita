@@ -2,7 +2,7 @@ import express from "express";
 import exphbs from "express-handlebars";
 import { connect, end, query, start, commit, rollback } from "./db.js";
 
-const PORT = 3000;
+const PORT = 3006;
 const WEB = "web";
 
 const app = express();
